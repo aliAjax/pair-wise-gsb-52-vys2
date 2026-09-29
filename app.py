@@ -14,10 +14,10 @@ DEFAULT_DB = BASE_DIR / "special-education.db"
 DEFAULT_PORT = 8328
 
 
-def build_service(db_path: str) -> Service:
-    repository = Repository(db_path)
+def build_service(db_path: str, clock=None) -> Service:
+    repository = Repository(db_path, clock=clock)
     audit = AuditRecorder(repository)
-    return Service(repository, DomainRules(), audit)
+    return Service(repository, DomainRules(), audit, clock=clock)
 
 
 def parse_args():

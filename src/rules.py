@@ -90,6 +90,9 @@ class DomainRules:
         elif action == "review":
             changes["progress_note"] = text(data, "progress_note")
             changes["review_overdue"] = False
+            # 复查时可选改用更新的区级规则版本（原因在服务层强制，快照在服务层替换）
+            if "use_rule_version" in data and not isinstance(data["use_rule_version"], int):
+                raise ValidationError("use_rule_version必须是整数")
             summary = "进入计划复查"
         elif action == "amend":
             changes["amendment_reason"] = text(data, "amendment_reason")

@@ -12,6 +12,8 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+RULE_RE = re.compile(r"^/api/rules/(\d+)$")
+RULE_DRAFT_RE = re.compile(r"^/api/rules/drafts/(\d+)/(revise|publish)$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -84,6 +86,22 @@ def make_handler(service: Any, static_dir: Path):
                 if match:
                     self._send(200, {"items": service.timeline(self._actor(), int(match.group(1)))})
                     return
+                if parsed.path == "/api/rules":
+                    self._send(200, {"items": service.list_rules(self._actor())})
+                    return
+                if parsed.path == "/api/rules/current":
+                    self._send(200, service.current_rule(self._actor()))
+                    return
+                match = RULE_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.get_rule(self._actor(), int(match.group(1))))
+                    return
+                if parsed.path == "/api/rules/timeline":
+                    self._send(200, {"items": service.rule_timeline(self._actor())})
+                    return
+                if parsed.path == "/api/timeline":
+                    self._send(200, {"items": service.combined_timeline(self._actor())})
+                    return
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
@@ -98,6 +116,25 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/records":
                     record = service.create(self._actor(), body.get("reference", ""), body.get("data", {}))
                     self._send(201, record)
+                    return
+                if parsed.path == "/api/rules/drafts":
+                    rule = service.create_rule_draft(self._actor(), body.get("data", {}))
+                    self._send(201, rule)
+                    return
+                match = RULE_DRAFT_RE.match(parsed.path)
+                if match:
+                    revision = body.get("expected_revision")
+                    if not isinstance(revision, int):
+                        raise ValidationError("expected_revision必须是整数")
+                    actor = self._actor()
+                    if match.group(2) == "revise":
+                        rule = service.revise_rule_draft(actor, int(match.group(1)), revision, body.get("data", {}))
+                    else:
+                        rule = service.publish_rule_draft(actor, int(match.group(1)), revision, body.get("data", {}))
+                    self._send(200, rule)
+                    return
+                if parsed.path == "/api/rules/rollback":
+                    self._send(200, service.rollback_rule(self._actor(), body.get("data", {})))
                     return
                 match = ACTION_RE.match(parsed.path)
                 if match:

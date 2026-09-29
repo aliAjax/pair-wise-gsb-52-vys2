@@ -9,25 +9,103 @@
     main { max-width: 960px; margin: auto; }
     button { padding: .55rem .9rem; cursor: pointer; }
     pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+    section { border: 1px solid #d8dee4; border-radius: 10px; padding: 1rem 1.2rem; margin: 1.2rem 0; }
+    input { padding: .45rem; border: 1px solid #c4ccd4; border-radius: 6px; }
+    label { font-size: .9rem; }
   </style>
 </head>
 <body>
 <main>
   <h1>特殊教育支持计划合规</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
+  <p>规则先存草稿、到点生效；计划按建档时固化的规则快照核对，复查时可带原因改用新版本。</p>
+
+  <section>
+    <h2>支持计划</h2>
+    <div class="row">
+      <button id="load">加载记录</button>
+      <button id="stats">查看状态统计</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>区级规则版本</h2>
+    <div class="row">
+      <button id="rules-current">当前生效规则</button>
+      <button id="rules-list">全部版本</button>
+      <button id="rules-timeline">规则时间线</button>
+      <button id="timeline-all">规则+计划统一时间线</button>
+    </div>
+    <div class="row">
+      <label>服务上限(分钟) <input id="cap" type="number" value="500"></label>
+      <label>复查周期(天) <input id="cycle" type="number" value="20"></label>
+      <button id="draft-create">新建草稿</button>
+    </div>
+    <div class="row">
+      <label>草稿ID <input id="draft-id" type="number" style="width:6rem"></label>
+      <label>草稿修订号 <input id="revision" type="number" style="width:6rem" value="1"></label>
+      <label>生效时间(可空=立即) <input id="effective-at" placeholder="2026-10-01T00:00:00+00:00"></label>
+      <button id="draft-revise">提交修订</button>
+      <button id="draft-publish">发布</button>
+    </div>
+    <div class="row">
+      <label>回滚到版本号 <input id="rollback-no" type="number" style="width:6rem"></label>
+      <label>原因 <input id="rollback-reason" placeholder="恢复上一学期规则"></label>
+      <button id="rollback">回滚（生成新生效版本）</button>
+    </div>
+  </section>
+
   <pre id="output">点击上方按钮读取服务状态。</pre>
 </main>
 <script>
-const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
+const headers = {"X-User-Id":"demo-admin","X-Role":"administrator","X-Org":"demo", "Content-Type":"application/json"};
+async function get(path) {
   const response = await fetch(path, {headers});
-  const data = await response.json();
+  return response.json();
+}
+async function post(path, payload) {
+  const response = await fetch(path, {method: "POST", headers, body: JSON.stringify(payload)});
+  return response.json();
+}
+function show(data) {
   document.getElementById("output").textContent = JSON.stringify(data, null, 2);
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+function values() {
+  return {
+    service_cap: parseInt(document.getElementById("cap").value, 10),
+    review_cycle_days: parseInt(document.getElementById("cycle").value, 10)
+  };
+}
+function draftRef() {
+  return {
+    id: parseInt(document.getElementById("draft-id").value, 10),
+    revision: parseInt(document.getElementById("revision").value, 10)
+  };
+}
+document.getElementById("load").onclick = () => get("/api/records?limit=20").then(show);
+document.getElementById("stats").onclick = () => get("/api/stats").then(show);
+document.getElementById("rules-current").onclick = () => get("/api/rules/current").then(show);
+document.getElementById("rules-list").onclick = () => get("/api/rules").then(show);
+document.getElementById("rules-timeline").onclick = () => get("/api/rules/timeline").then(show);
+document.getElementById("timeline-all").onclick = () => get("/api/timeline").then(show);
+document.getElementById("draft-create").onclick = () =>
+  post("/api/rules/drafts", {data: {...values(), reason: "页面演示草稿"}}).then(show);
+document.getElementById("draft-revise").onclick = () => {
+  const ref = draftRef();
+  return post(`/api/rules/drafts/${ref.id}/revise`,
+    {expected_revision: ref.revision, data: {...values(), reason: "页面演示修订"}}).then(show);
+};
+document.getElementById("draft-publish").onclick = () => {
+  const ref = draftRef();
+  const at = document.getElementById("effective-at").value.trim();
+  return post(`/api/rules/drafts/${ref.id}/publish`,
+    {expected_revision: ref.revision, data: {reason: "区里调整服务上限与复查周期", effective_at: at || null}}).then(show);
+};
+document.getElementById("rollback").onclick = () =>
+  post("/api/rules/rollback", {data: {
+    version_no: parseInt(document.getElementById("rollback-no").value, 10),
+    reason: document.getElementById("rollback-reason").value || "回滚"
+  }}).then(show);
 </script>
 </body>
 </html>
