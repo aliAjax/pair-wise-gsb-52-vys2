@@ -3,8 +3,11 @@ import argparse
 from pathlib import Path
 
 from src.audit import AuditRecorder
+from src.clock import Clock
 from src.http_api import create_server
 from src.repository import Repository
+from src.rule_policy import RulePolicy
+from src.rule_store import RuleStore
 from src.rules import DomainRules
 from src.service import Service
 
@@ -17,7 +20,12 @@ DEFAULT_PORT = 8328
 def build_service(db_path: str) -> Service:
     repository = Repository(db_path)
     audit = AuditRecorder(repository)
-    return Service(repository, DomainRules(), audit)
+    clock = Clock()
+    policy = RulePolicy()
+    rules = DomainRules(policy)
+    # 规则存储独立建表；Service内部会复用同一RuleStore并执行旧库回填。
+    rule_store = RuleStore(db_path, policy)
+    return Service(repository, rules, audit, policy=policy, rule_store=rule_store, clock=clock)
 
 
 def parse_args():

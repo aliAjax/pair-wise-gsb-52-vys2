@@ -5,29 +5,159 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>特殊教育支持计划合规</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
-    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; background: #f7f9fb; }
+    main { max-width: 1080px; margin: auto; display: grid; gap: 1.25rem; }
+    section { background: #fff; border: 1px solid #e3e8ee; border-radius: 10px; padding: 1rem 1.25rem; }
+    h1 { margin: 0; font-size: 1.4rem; }
+    h2 { margin: 0 0 .75rem; font-size: 1.05rem; }
+    button { padding: .45rem .8rem; cursor: pointer; border: 1px solid #3262b3; background: #3262b3; color: #fff; border-radius: 6px; }
+    button.secondary { background: #fff; color: #3262b3; }
+    pre { background: #f4f6f8; padding: .9rem; overflow: auto; border-radius: 8px; font-size: .82rem; min-height: 3rem; }
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+    label { font-size: .85rem; }
+    input { padding: .35rem .5rem; border: 1px solid #c4ccd6; border-radius: 6px; width: 8rem; }
+    .hint { color: #667588; font-size: .8rem; }
+    table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+    th, td { border-bottom: 1px solid #edf0f3; padding: .4rem .5rem; text-align: left; }
+    th { color: #5a6b7e; font-weight: 600; }
+    .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .75rem; }
+    .effective { background: #e2f4e6; color: #1f7a37; }
+    .draft { background: #fff3d6; color: #8a6200; }
+    .scheduled { background: #e3edff; color: #274b9b; }
+    .superseded { background: #eceff3; color: #667588; }
   </style>
 </head>
 <body>
 <main>
   <h1>特殊教育支持计划合规</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <p class="hint">计划在建档时绑定当时的区定规则快照；区里调整规则不会改掉在用计划，复查修订时可带原因改用新版本。</p>
+
+  <section>
+    <h2>区定规则版本</h2>
+    <div class="row">
+      <label>服务上限（分钟）<input id="cap" type="number" value="900"></label>
+      <label>复查周期（天）<input id="cycle" type="number" value="25"></label>
+      <label>生效时间（留空立即）<input id="effectiveAt" type="text" placeholder="2026-10-01T00:00:00+00:00" style="width:18rem"></label>
+      <button id="newDraft">新建草稿</button>
+    </div>
+    <div class="row" style="margin-top:.6rem">
+      <button class="secondary" id="loadRules">刷新规则列表</button>
+      <button class="secondary" id="revise">修订当前草稿</button>
+      <button id="publish">发布当前草稿</button>
+      <button class="secondary" id="rollback">回滚到v1（生成新版本）</button>
+    </div>
+    <p class="hint">修订/发布需要同时提供版本号与修订号；若期间别人已提交，晚到的操作会收到“请先刷新”。</p>
+    <table>
+      <thead><tr><th>版本</th><th>修订</th><th>状态</th><th>服务上限</th><th>复查周期</th><th>生效时间</th></tr></thead>
+      <tbody id="ruleRows"></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>支持计划</h2>
+    <div class="row">
+      <button class="secondary" id="load">加载计划</button>
+      <button class="secondary" id="stats">状态统计</button>
+      <button class="secondary" id="timeline">统一时间线</button>
+    </div>
+    <pre id="output">点击上方按钮查看数据。</pre>
+  </section>
 </main>
 <script>
 const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
-  const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+let currentDraft = null;
+
+async function api(method, path, payload) {
+  const options = {method, headers};
+  if (payload !== undefined) {
+    headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(payload);
+  }
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(data.message || "请求失败"), {status: response.status, data});
+  return data;
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+function show(value) {
+  document.getElementById("output").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+function draftConfig() {
+  return {
+    service_cap: Number(document.getElementById("cap").value),
+    review_cycle_days: Number(document.getElementById("cycle").value),
+  };
+}
+function renderRules(items) {
+  const body = document.getElementById("ruleRows");
+  body.innerHTML = "";
+  for (const rule of items) {
+    if (rule.status === "draft") currentDraft = rule;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>v${rule.version}</td><td>${rule.revision}</td>` +
+      `<td><span class="pill ${rule.status}">${rule.status}</span></td>` +
+      `<td>${rule.service_cap}</td><td>${rule.review_cycle_days}</td>` +
+      `<td>${rule.effective_at || ""}</td>`;
+    body.appendChild(tr);
+  }
+}
+async function loadRules() {
+  const data = await api("GET", "/api/rules");
+  renderRules(data.items);
+  return data.items;
+}
+
+document.getElementById("loadRules").onclick = () => loadRules().catch((e) => show(e.message));
+document.getElementById("newDraft").onclick = async () => {
+  try {
+    const draft = await api("POST", "/api/rules/drafts", {data: draftConfig()});
+    currentDraft = draft;
+    await loadRules();
+    show({created: draft});
+  } catch (e) { show(e.data || e.message); }
+};
+document.getElementById("revise").onclick = async () => {
+  if (!currentDraft) return show("请先新建或刷新草稿。");
+  try {
+    const revised = await api("POST", "/api/rules/drafts/revise", {
+      expected_version: currentDraft.version,
+      expected_revision: currentDraft.revision,
+      data: draftConfig(),
+    });
+    currentDraft = revised;
+    await loadRules();
+    show({revised});
+  } catch (e) { show(e.data || e.message); }
+};
+document.getElementById("publish").onclick = async () => {
+  if (!currentDraft) return show("请先新建或刷新草稿。");
+  try {
+    const effectiveAt = document.getElementById("effectiveAt").value.trim();
+    const payload = {
+      expected_version: currentDraft.version,
+      expected_revision: currentDraft.revision,
+      data: effectiveAt ? {effective_at: effectiveAt} : {},
+    };
+    const published = await api("POST", "/api/rules/drafts/publish", payload);
+    currentDraft = null;
+    await loadRules();
+    show({published});
+  } catch (e) { show(e.data || e.message); }
+};
+document.getElementById("rollback").onclick = async () => {
+  try {
+    const rolled = await api("POST", "/api/rules/rollback", {target_version: 1});
+    await loadRules();
+    show({rolled_back_as_new_version: rolled});
+  } catch (e) { show(e.data || e.message); }
+};
+document.getElementById("load").onclick = () =>
+  api("GET", "/api/records?limit=20").then(show).catch((e) => show(e.data || e.message));
+document.getElementById("stats").onclick = () =>
+  api("GET", "/api/stats").then(show).catch((e) => show(e.data || e.message));
+document.getElementById("timeline").onclick = () =>
+  api("GET", "/api/timeline").then(show).catch((e) => show(e.data || e.message));
+
+loadRules().catch(() => {});
 </script>
 </body>
 </html>

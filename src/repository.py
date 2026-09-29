@@ -142,6 +142,47 @@ class Repository:
             rows = connection.execute("SELECT state, COUNT(*) AS total FROM records GROUP BY state").fetchall()
         return {str(row["state"]): int(row["total"]) for row in rows}
 
+    def backfill_rule_snapshots(self, baseline: Dict[str, Any]) -> List[int]:
+        """旧库计划补建“建档时规则快照”。
+
+        只补不动业务数据：版本号、状态均不改变，仅在payload中补入快照，
+        并追加一条审计事件说明这次回填，时间线可与正常修订区分。
+        """
+        snapshot = {
+            "rule_version": int(baseline["version"]),
+            "service_cap": int(baseline["service_cap"]),
+            "review_cycle_days": int(baseline["review_cycle_days"]),
+        }
+        backfilled: List[int] = []
+        now = _now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute("SELECT id, version, payload FROM records").fetchall()
+            for row in rows:
+                payload = json.loads(row["payload"])
+                if isinstance(payload.get("rule_snapshot"), dict):
+                    continue
+                payload["rule_snapshot"] = dict(snapshot)
+                payload.setdefault("rule_version", snapshot["rule_version"])
+                connection.execute(
+                    "UPDATE records SET payload=? WHERE id=?",
+                    (json.dumps(payload, ensure_ascii=False, sort_keys=True), row["id"]),
+                )
+                connection.execute(
+                    "INSERT INTO audit_events(record_id,action,actor_id,version,details,created_at) VALUES(?,?,?,?,?,?)",
+                    (
+                        row["id"],
+                        "rule_snapshot_backfilled",
+                        "system",
+                        int(row["version"]),
+                        json.dumps({"snapshot": snapshot, "reason": "旧库计划补建建档规则快照"}, ensure_ascii=False, sort_keys=True),
+                        now,
+                    ),
+                )
+                backfilled.append(int(row["id"]))
+            connection.commit()
+        return backfilled
+
     def health(self) -> bool:
         try:
             with self._connect() as connection:
